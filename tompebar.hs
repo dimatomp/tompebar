@@ -4,8 +4,6 @@ import Data.Char
 import Data.Maybe
 import Data.List
 
-import Debug.Trace
-
 import Network.Socket
 
 import System.Directory
@@ -136,7 +134,7 @@ loop buffer cState@(UserState wIdx wList) = do
             bspc ["monitor", "-a", getWorkspaceName newState]
             return newState
         'r' -> do
-            let newState = case det of
+            let newState@(UserState _ nwList) = case det of
                     'd':name ->
                         let newDList = (dList `modInd` dIdx) name
                             newWState = Workspace wName dIdx newDList
@@ -145,10 +143,15 @@ loop buffer cState@(UserState wIdx wList) = do
                         let newWList = (wList `modInd` wIdx) $ Workspace name dIdx dList
                         in UserState wIdx newWList
                     _ -> cState
+                Workspace nwName _ ndList = nwList !! wIdx
+            forM_ (zip dList ndList) $ \(old, new) ->
+                bspc ["desktop", getDesktopName wName old,
+                     "-n", getDesktopName nwName new]
             bspc ["desktop", "-n", getWorkspaceName newState]
             return newState
+        _ -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
-    loop buffer newState
+    loop buffer
 
 main = do
     let socketPath = "/tmp/tompebar.socket"
