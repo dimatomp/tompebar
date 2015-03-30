@@ -7,11 +7,16 @@ import Data.List
 import Network.Socket
 
 import System.Directory
+import System.Environment
 import System.IO
 import System.Process
 
 data Workspace = Workspace String Int [String] deriving Show
 data UserState = UserState Int [Workspace] deriving Show
+data BspcEntry = BspcEntry { occupied :: Bool
+                           , focused :: Bool
+                           , workspace :: String
+                           , desktop :: String }
 
 separator = '$'
 
@@ -32,27 +37,41 @@ modInd list idx newElem = let (pref, suff) = splitAt idx list in pref ++ newElem
 bspc :: [String] -> IO ()
 bspc = callProcess "bspc"
 
-readUserState :: IO UserState
-readUserState = do
-    let parseInput (':':c:name)
+getBspcStatus :: IO [BspcEntry]
+getBspcStatus =
+    let parseInput result (':':c:name)
             | toLower c `elem` "of" =
                 let (desktop, cont) = span (/= ':') name
-                in (desktop, isUpper c) : parseInput cont
-            | otherwise = parseInput name
-        parseInput (_:s) = parseInput s
-        parseInput [] = []
-    cDesktops <- liftM parseInput $ readProcess "bspc" ["control", "--get-status"] ""
-    let split = map (\(s, f) -> let (a, b) = span (/= separator) s in (a, tail b, f)) cDesktops
-        sorted = sortBy (\(a, _, _) (b, _, _) -> a `compare` b) split
-        grouped = groupBy (\(a, _, _) (b, _, _) -> a == b) $ sorted
-        createWorkspace list@((a, _, _):s) =
-            let cIndex = findIndex (\(_, _, b) -> b) list
-            in (Workspace a (fromMaybe 0 cIndex) (map (\(_, d, _) -> d) list), isJust cIndex)
+                    (w, d) = getDesktopRepr desktop
+                in parseInput (BspcEntry (toLower c == 'o') (isUpper c) w d : result) cont
+            | otherwise = parseInput result name
+        parseInput result (_:s) = parseInput result s
+        parseInput result [] = result
+    in liftM (parseInput []) $ readProcess "bspc" ["control", "--get-status"] ""
+
+readUserState :: IO UserState
+readUserState = do
+    cDesktops <- getBspcStatus
+    let sorted = sortBy (\d1 d2 -> workspace d1 `compare` workspace d2) cDesktops
+        grouped = groupBy (\d1 d2 -> workspace d1 == workspace d2) sorted
+        createWorkspace list@(a:s) =
+            let cIndex = findIndex focused list
+            in (Workspace (workspace a) (fromMaybe 0 cIndex) (map desktop list), isJust cIndex)
         resList = map createWorkspace grouped
     return $ UserState (fromJust $ findIndex snd resList) (map fst resList)
 
+canDeleteDesktop :: String -> String -> IO Bool
+canDeleteDesktop wName dName = do
+    cDesktops <- getBspcStatus
+    let [theDesktop] = filter (\a -> workspace a == wName && desktop a == dName) cDesktops
+    return $ not $ occupied theDesktop
+
+freeDesktops :: String -> IO [String]
+freeDesktops wName = liftM (map desktop . filter (\a -> workspace a == wName && not (occupied a))) getBspcStatus
+
 formatBar :: UserState -> IO ()
 formatBar (UserState wIdx wList) = do
+    getArgs >>= (`forM_` putStr)
     let (pref, Workspace cName dIdx dList : suff) = splitAt wIdx wList
     putChar '|'
     forM_ pref $ \(Workspace name _ _) -> putStr $ ' ':name ++ " |"
@@ -65,17 +84,22 @@ formatBar (UserState wIdx wList) = do
     putStr " } |"
     forM_ suff $ \(Workspace name _ _) -> putStr $ ' ':name ++ " |"
     putStrLn ""
+    hFlush stdout
 
 data BufferedInput = BufferedInput Socket [String]
 
 getCommand :: BufferedInput -> IO (String, BufferedInput)
 getCommand (BufferedInput sock list) = do
-    cmd:rem <- if null list
-        then do
+    let awaitForClient = do
             (client, _) <- accept sock
             cHandle <- socketToHandle client ReadMode
             hSetBuffering cHandle LineBuffering
-            liftM lines $ hGetContents cHandle
+            result <- liftM lines $ hGetContents cHandle
+            if null result
+                then awaitForClient
+                else return result
+    cmd:rem <- if null list
+        then awaitForClient
         else return list
     return (cmd, BufferedInput sock rem)
 
@@ -133,25 +157,24 @@ loop buffer cState@(UserState wIdx wList) = do
                     _ -> cState
             bspc ["monitor", "-a", getWorkspaceName newState]
             return newState
-        'r' -> do
-            let newState@(UserState _ nwList) = case det of
-                    'd':name ->
-                        let newDList = (dList `modInd` dIdx) name
+        'r' -> case det of
+            'd':name -> if isNothing $ elemIndex name dList
+                then do let newDList = (dList `modInd` dIdx) name
                             newWState = Workspace wName dIdx newDList
-                        in UserState wIdx $ (wList `modInd` wIdx) newWState
-                    'w':name ->
-                        let newWList = (wList `modInd` wIdx) $ Workspace name dIdx dList
-                        in UserState wIdx newWList
-                    _ -> cState
-                Workspace nwName _ ndList = nwList !! wIdx
-            forM_ (zip dList ndList) $ \(old, new) ->
-                bspc ["desktop", getDesktopName wName old,
-                     "-n", getDesktopName nwName new]
-            bspc ["desktop", "-n", getWorkspaceName newState]
-            return newState
+                        bspc ["desktop", "-n", getDesktopName wName name]
+                        return $ UserState wIdx $ (wList `modInd` wIdx) newWState
+                else return cState -- stub!
+            'w':name -> if isNothing $ findIndex (\(Workspace n _ _) -> n == name) wList
+                then do
+                    let newWList = (wList `modInd` wIdx) $ Workspace name dIdx dList
+                    forM_ dList $ \dName -> bspc [ "desktop", getDesktopName wName dName
+                                                 , "-n", getDesktopName name dName]
+                    return $ UserState wIdx newWList
+                else return cState -- stub!
+            _ -> return cState
         _ -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
-    loop buffer
+    loop buffer newState
 
 main = do
     let socketPath = "/tmp/tompebar.socket"
