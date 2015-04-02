@@ -185,12 +185,12 @@ readCommands stateVar buffer = do
                        let result = if length (dList cWorkspace) > 1
                                then let (p, s) = splitAt (dIdx cWorkspace) (dList cWorkspace)
                                         ndList = p ++ tail s
-                                        ndIdx = max (length ndList) $ dIdx cWorkspace
+                                        ndIdx = min (length ndList - 1) $ dIdx cWorkspace
                                         nWspc = cWorkspace { dIdx = ndIdx, dList = ndList }
                                     in cState { wList = (wList cState `modInd` wIdx cState) nWspc }
                                else let (p, s) = splitAt (wIdx cState) (wList cState)
                                         nwList = p ++ tail s
-                                        nwIdx = max (length nwList) $ wIdx cState
+                                        nwIdx = min (length nwList - 1) $ wIdx cState
                                     in UserState nwIdx nwList
                        bspc ["desktop", "-f", getWorkspaceName result]
                        bspc ["monitor", "-r", getWorkspaceName cState]
