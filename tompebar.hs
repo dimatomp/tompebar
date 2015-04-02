@@ -14,12 +14,12 @@ import System.IO
 import System.Process
 
 data Desktop = Desktop { isOccupied :: Bool
-                       , dName :: String } deriving Show
+                       , dName :: String }
 data Workspace = Workspace { wName :: String
                            , dIdx :: Int
-                           , dList :: [Desktop] } deriving Show
+                           , dList :: [Desktop] }
 data UserState = UserState { wIdx :: Int
-                           , wList :: [Workspace] } deriving Show
+                           , wList :: [Workspace] }
 data BspcEntry = BspcEntry { occupied :: Bool
                            , focused :: Bool
                            , workspace :: String
