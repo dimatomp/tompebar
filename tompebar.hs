@@ -6,8 +6,6 @@ import Data.Char
 import Data.Maybe
 import Data.List
 
---import Debug.Trace
-
 import Network.Socket
 
 import System.Directory
@@ -26,8 +24,6 @@ data BspcEntry = BspcEntry { occupied :: Bool
                            , focused :: Bool
                            , workspace :: String
                            , desktop :: String }
-
-trace _ = id
 
 separator = '$'
 
@@ -180,7 +176,9 @@ readCommands stateVar buffer = do
             bspc ["desktop", "-n", getWorkspaceName result]
             return result
         'd' -> let cWorkspace = wList cState !! wIdx cState
-               in if isOccupied $ dList cWorkspace !! dIdx cWorkspace then return cState
+                   checkOccupied = isOccupied $ dList cWorkspace !! dIdx cWorkspace
+                   checkLastDesktop = length (wList cState) == 1 && length (dList cWorkspace) == 1
+               in if checkOccupied || checkLastDesktop then return cState
                    else do
                        let result = if length (dList cWorkspace) > 1
                                then let (p, s) = splitAt (dIdx cWorkspace) (dList cWorkspace)
@@ -197,7 +195,7 @@ readCommands stateVar buffer = do
                        return result
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
-    trace (show newState) $ putMVar stateVar newState
+    putMVar stateVar newState
     readCommands stateVar buffer
 
 main = do
