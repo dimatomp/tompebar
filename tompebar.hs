@@ -54,10 +54,7 @@ parseInput = parseInput' []
 
 subscribeBspc :: MVar UserState -> IO ()
 subscribeBspc stateVar = do
-    (_, Just stdout, _, _) <- createProcess $
-        (shell "bspc control --subscribe") { std_out = CreatePipe }
-    hSetBuffering stdout LineBuffering
-    statusChanges <- liftM (map parseInput . lines) $ hGetContents stdout
+    statusChanges <- liftM (map parseInput . lines) getContents
     forM_ statusChanges $ \dState -> do
         cState <- takeMVar stateVar
         let BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
@@ -204,7 +201,7 @@ main = do
     inputSocket <- socket AF_UNIX Stream defaultProtocol
     bind inputSocket $ SockAddrUnix socketPath
     listen inputSocket 1
-    initList <- liftM parseInput $ readProcess "bspc" ["control", "--get-status"] ""
+    initList <- liftM parseInput getLine
     let addDesktop cState entry = case findIndex ((== workspace entry) . wName) $ wList cState of
             Nothing -> let nDesktop = Desktop (occupied entry) (desktop entry)
                            nWorkspace = Workspace (workspace entry) 0 [nDesktop]
@@ -219,6 +216,7 @@ main = do
                                nwIdx = if focused entry then length $ wList cState else wIdx cState
                            in UserState nwIdx ((wList cState `modInd` number) nWorkspace)
         initState = foldl addDesktop (UserState undefined []) initList
+    formatBar initState
     uState <- newMVar initState
     forkIO $ subscribeBspc uState
     readCommands uState $ BufferedInput inputSocket []
