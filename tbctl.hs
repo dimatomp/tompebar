@@ -6,7 +6,7 @@ import Network.Socket
 
 import System.Environment
 
-{- A simple command utility. Human-readable format to be added. -}
+{- A simple command utility. -}
 main = do
     let socketPath = "/tmp/tompebar.socket"
     command <- getArgs
