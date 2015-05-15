@@ -35,7 +35,7 @@ data BspcEntry = BspcEntry { occupied :: Bool
 
 separator = '$'
 
--- Get bspc representation of a desktop by the workspace and desktop names.
+-- Get bspc representation of a desktop from the workspace and desktop names.
 getDesktopName :: String -> String -> String
 getDesktopName wsp dsk = wsp ++ separator : dsk
 
@@ -51,7 +51,7 @@ getWorkspaceName state = getDesktopName wname dname
         wname = wName cWorkspace
         dname = dName $ dList cWorkspace !! dIdx cWorkspace
 
--- Parse the output of "bspc control --subscribe".
+-- Parse the output of "bspc control --get-status".
 parseInput :: String -> [BspcEntry]
 parseInput = parseInput' []
   where
