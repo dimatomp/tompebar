@@ -13,17 +13,19 @@ import System.Environment
 import System.IO
 import System.Process
 
+import Debug.Trace
+
 data Desktop = Desktop { isOccupied :: Bool
-                       , dName :: String }
+                       , dName :: String } deriving Show
 data Workspace = Workspace { wName :: String
                            , dIdx :: Int
-                           , dList :: [Desktop] }
+                           , dList :: [Desktop] } deriving Show
 data UserState = UserState { wIdx :: Int
-                           , wList :: [Workspace] }
+                           , wList :: [Workspace] } deriving Show
 data BspcEntry = BspcEntry { occupied :: Bool
                            , focused :: Bool
                            , workspace :: String
-                           , desktop :: String }
+                           , desktop :: String } deriving Show
 
 separator = '$'
 
@@ -54,10 +56,11 @@ parseInput = parseInput' []
 
 subscribeBspc :: MVar UserState -> IO ()
 subscribeBspc stateVar = do
-    statusChanges <- liftM (map parseInput . lines) getContents
-    forM_ statusChanges $ \dState -> do
-        cState <- takeMVar stateVar
-        let BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
+    dState <- liftM parseInput getLine
+    freeState <- tryTakeMVar stateVar
+    when (isJust freeState) $ do
+        let Just cState = freeState
+            BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
             adjustDst dst =
                 let bspcEntry = dState !! (fromJust $ findIndex ((== dName dst) . desktop) dState)
                 in dst { isOccupied = occupied bspcEntry }
@@ -69,6 +72,7 @@ subscribeBspc stateVar = do
             newState = UserState wIndex $ (occAdjust `modInd` wIndex) newWState
         formatBar newState
         putMVar stateVar newState
+    subscribeBspc stateVar
 
 modInd :: [a] -> Int -> a -> [a]
 modInd list idx newElem = let (pref, suff) = splitAt idx list in pref ++ newElem : tail suff
@@ -155,23 +159,31 @@ readCommands stateVar buffer = do
             case result of
                 Nothing -> return cState
                 Just nState -> bspc ["monitor", "-a", getWorkspaceName nState] >> return nState
-        'r' -> do
-            let result = case det of
-                    'd':name -> let cWorkspace = wList cState !! wIdx cState
-                                    nDesktop = (dList cWorkspace !! dIdx cWorkspace) { dName = name }
-                                    ndList = (dList cWorkspace `modInd` dIdx cWorkspace) nDesktop
-                                    nWorkspace = cWorkspace { dList = ndList }
-                                    nwList = (wList cState `modInd` wIdx cState) nWorkspace
-                                    exists = findIndex ((== name) . dName) $ dList cWorkspace
-                                in if isNothing exists then cState { wList = nwList } else cState
-                    'w':name -> let cWorkspace = wList cState !! wIdx cState
-                                    exists = findIndex ((== name) . wName) $ wList cState
-                                    nWorkspace = cWorkspace { wName = name }
-                                    nwList = (wList cState `modInd` wIdx cState) nWorkspace
-                                in if isNothing exists then cState { wList = nwList } else cState
-                    _        -> cState
-            bspc ["desktop", "-n", getWorkspaceName result]
-            return result
+        'r' -> case det of
+            'd':name -> let cWorkspace = wList cState !! wIdx cState
+                            nDesktop = (dList cWorkspace !! dIdx cWorkspace) { dName = name }
+                            ndList = (dList cWorkspace `modInd` dIdx cWorkspace) nDesktop
+                            nWorkspace = cWorkspace { dList = ndList }
+                            nwList = (wList cState `modInd` wIdx cState) nWorkspace
+                            exists = findIndex ((== name) . dName) $ dList cWorkspace
+                        in if isNothing exists
+                            then do let result = cState { wList = nwList }
+                                    bspc ["desktop", "-n", getWorkspaceName result]
+                                    return result
+                            else return cState
+            'w':name -> let cWorkspace = wList cState !! wIdx cState
+                            exists = findIndex ((== name) . wName) $ wList cState
+                            nWorkspace = cWorkspace { wName = name }
+                            nwList = (wList cState `modInd` wIdx cState) nWorkspace
+                        in if isNothing exists
+                            then do let result = cState { wList = nwList }
+                                        oldName = getDesktopName (wName cWorkspace)
+                                        newName = getDesktopName name
+                                    forM (map dName $ dList nWorkspace) $ \dName ->
+                                        bspc ["desktop", oldName dName, "-n", newName dName]
+                                    return result
+                            else return cState
+            _        -> return cState
         'd' -> let cWorkspace = wList cState !! wIdx cState
                    checkOccupied = isOccupied $ dList cWorkspace !! dIdx cWorkspace
                    checkLastDesktop = length (wList cState) == 1 && length (dList cWorkspace) == 1
@@ -192,6 +204,7 @@ readCommands stateVar buffer = do
                        return result
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
+    formatBar newState
     putMVar stateVar newState
     readCommands stateVar buffer
 
