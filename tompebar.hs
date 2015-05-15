@@ -13,28 +13,37 @@ import System.Environment
 import System.IO
 import System.Process
 
-import Debug.Trace
+{----------------- Required data structures: -----------------}
 
-data Desktop = Desktop { isOccupied :: Bool
-                       , dName :: String } deriving Show
+-- Workspace, consists of desktops.
 data Workspace = Workspace { wName :: String
                            , dIdx :: Int
-                           , dList :: [Desktop] } deriving Show
+                           , dList :: [Desktop] }
+-- A single desktop. We also need to know whether it contains windows.
+data Desktop = Desktop { isOccupied :: Bool
+                       , dName :: String }
+-- The whole user state: a list of workspaces and index of the current one.
 data UserState = UserState { wIdx :: Int
-                           , wList :: [Workspace] } deriving Show
+                           , wList :: [Workspace] }
+-- bspc will give info about the desktops in this format.
 data BspcEntry = BspcEntry { occupied :: Bool
                            , focused :: Bool
                            , workspace :: String
-                           , desktop :: String } deriving Show
+                           , desktop :: String }
+
+{-------------------------------------------------------------}
 
 separator = '$'
 
+-- Get bspc representation of a desktop by the workspace and desktop names.
 getDesktopName :: String -> String -> String
 getDesktopName wsp dsk = wsp ++ separator : dsk
 
+-- Get my representation of a desktop from the bspc one.
 getDesktopRepr :: String -> (String, String)
 getDesktopRepr str = let (workspace, desktop) = span (/= separator) str in (workspace, tail desktop)
 
+-- Get current desktop name from a state.
 getWorkspaceName :: UserState -> String
 getWorkspaceName state = getDesktopName wname dname
     where
@@ -42,6 +51,7 @@ getWorkspaceName state = getDesktopName wname dname
         wname = wName cWorkspace
         dname = dName $ dList cWorkspace !! dIdx cWorkspace
 
+-- Parse the output of "bspc control --subscribe".
 parseInput :: String -> [BspcEntry]
 parseInput = parseInput' []
   where
@@ -54,11 +64,14 @@ parseInput = parseInput' []
       parseInput' result (_:s) = parseInput' result s
       parseInput' result [] = result
 
+-- Bspc may accidentially alter the current desktop - it should notify me about that.
 subscribeBspc :: MVar UserState -> IO ()
 subscribeBspc stateVar = do
     dState <- liftM parseInput getLine
-    freeState <- tryTakeMVar stateVar
+    freeState <- tryTakeMVar stateVar -- If no luck, there could be readCommands renaming a
+                                      -- workspace using several queries. Staying silent.
     when (isJust freeState) $ do
+        -- Update the current user state.
         let Just cState = freeState
             BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
             adjustDst dst =
@@ -80,6 +93,10 @@ modInd list idx newElem = let (pref, suff) = splitAt idx list in pref ++ newElem
 bspc :: [String] -> IO ()
 bspc = callProcess "bspc"
 
+-- Format the current user state to output it into bar or somewhere.
+-- TODO
+--  * Add format customization
+--  * Try to use coloring tools bar-aint-recursive
 formatBar :: UserState -> IO ()
 formatBar (UserState wIdx wList) = do
     getArgs >>= (`forM_` putStr)
@@ -99,6 +116,7 @@ formatBar (UserState wIdx wList) = do
 
 data BufferedInput = BufferedInput Socket [String]
 
+-- Accept a client (tbctl) and read its command(s).
 getCommand :: BufferedInput -> IO (String, BufferedInput)
 getCommand (BufferedInput sock list) = do
     let awaitForClient = do
@@ -114,12 +132,13 @@ getCommand (BufferedInput sock list) = do
         else return list
     return (cmd, BufferedInput sock rem)
 
+-- Process user commands.
 readCommands :: MVar UserState -> BufferedInput -> IO ()
 readCommands stateVar buffer = do
     (cmd:det, buffer) <- getCommand buffer
     cState <- takeMVar stateVar
     newState <- case cmd of
-        's' -> return $
+        's' -> return $ -- s[d|w][p|n|number] - switch desktop/workspace to a prev/next/specified one.
             case det of
                 'd':cmd -> let cWorkspace = wList cState !! wIdx cState
                                dIndex = dIdx cWorkspace
@@ -141,7 +160,7 @@ readCommands stateVar buffer = do
                                            then wIdx cState else nIndex
                            in cState { wIdx = fIndex }
                 _ -> cState
-        'a' -> do
+        'a' -> do -- a[d|w]name - add a desktop/workspace with a given name
             let result = case det of
                     'd':name -> let cWorkspace = wList cState !! wIdx cState
                                     ndIdx = length $ dList cWorkspace
@@ -159,7 +178,7 @@ readCommands stateVar buffer = do
             case result of
                 Nothing -> return cState
                 Just nState -> bspc ["monitor", "-a", getWorkspaceName nState] >> return nState
-        'r' -> case det of
+        'r' -> case det of -- r[d|w]name - rename a desktop/workspace
             'd':name -> let cWorkspace = wList cState !! wIdx cState
                             nDesktop = (dList cWorkspace !! dIdx cWorkspace) { dName = name }
                             ndList = (dList cWorkspace `modInd` dIdx cWorkspace) nDesktop
@@ -184,24 +203,25 @@ readCommands stateVar buffer = do
                                     return result
                             else return cState
             _        -> return cState
-        'd' -> let cWorkspace = wList cState !! wIdx cState
-                   checkOccupied = isOccupied $ dList cWorkspace !! dIdx cWorkspace
-                   checkLastDesktop = length (wList cState) == 1 && length (dList cWorkspace) == 1
-               in if checkOccupied || checkLastDesktop then return cState
-                   else do
-                       let result = if length (dList cWorkspace) > 1
-                               then let (p, s) = splitAt (dIdx cWorkspace) (dList cWorkspace)
-                                        ndList = p ++ tail s
-                                        ndIdx = min (length ndList - 1) $ dIdx cWorkspace
-                                        nWspc = cWorkspace { dIdx = ndIdx, dList = ndList }
-                                    in cState { wList = (wList cState `modInd` wIdx cState) nWspc }
-                               else let (p, s) = splitAt (wIdx cState) (wList cState)
-                                        nwList = p ++ tail s
-                                        nwIdx = min (length nwList - 1) $ wIdx cState
-                                    in UserState nwIdx nwList
-                       bspc ["desktop", "-f", getWorkspaceName result]
-                       bspc ["monitor", "-r", getWorkspaceName cState]
-                       return result
+        'd' -> -- d - remove a free desktop
+            let cWorkspace = wList cState !! wIdx cState
+                checkOccupied = isOccupied $ dList cWorkspace !! dIdx cWorkspace
+                checkLastDesktop = length (wList cState) == 1 && length (dList cWorkspace) == 1
+            in if checkOccupied || checkLastDesktop then return cState
+                else do
+                    let result = if length (dList cWorkspace) > 1
+                            then let (p, s) = splitAt (dIdx cWorkspace) (dList cWorkspace)
+                                     ndList = p ++ tail s
+                                     ndIdx = min (length ndList - 1) $ dIdx cWorkspace
+                                     nWspc = cWorkspace { dIdx = ndIdx, dList = ndList }
+                                 in cState { wList = (wList cState `modInd` wIdx cState) nWspc }
+                            else let (p, s) = splitAt (wIdx cState) (wList cState)
+                                     nwList = p ++ tail s
+                                     nwIdx = min (length nwList - 1) $ wIdx cState
+                                 in UserState nwIdx nwList
+                    bspc ["desktop", "-f", getWorkspaceName result]
+                    bspc ["monitor", "-r", getWorkspaceName cState]
+                    return result
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
     formatBar newState
@@ -214,6 +234,7 @@ main = do
     inputSocket <- socket AF_UNIX Stream defaultProtocol
     bind inputSocket $ SockAddrUnix socketPath
     listen inputSocket 1
+    -- We should first obtain our initial state.
     initList <- liftM parseInput getLine
     let addDesktop cState entry = case findIndex ((== workspace entry) . wName) $ wList cState of
             Nothing -> let nDesktop = Desktop (occupied entry) (desktop entry)
