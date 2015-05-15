@@ -96,7 +96,7 @@ bspc = callProcess "bspc"
 -- Format the current user state to output it into bar or somewhere.
 -- TODO
 --  * Add format customization
---  * Try to use coloring tools bar-aint-recursive
+--  * Try to use coloring tools of bar-aint-recursive
 formatBar :: UserState -> IO ()
 formatBar (UserState wIdx wList) = do
     getArgs >>= (`forM_` putStr)
