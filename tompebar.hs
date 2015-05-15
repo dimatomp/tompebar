@@ -64,7 +64,7 @@ parseInput = parseInput' []
       parseInput' result (_:s) = parseInput' result s
       parseInput' result [] = result
 
--- Bspc may accidentially alter the current desktop - it should notify me about that.
+-- bspwm may have accidentially switched the current desktop - it should notify me about that.
 subscribeBspc :: MVar UserState -> IO ()
 subscribeBspc stateVar = do
     dState <- liftM parseInput getLine
