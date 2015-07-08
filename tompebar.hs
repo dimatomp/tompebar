@@ -247,7 +247,7 @@ main = do
                                    then length $ dList cWorkspace else dIdx cWorkspace
                                ndList = dList cWorkspace ++ [nDesktop]
                                nWorkspace = cWorkspace { dIdx = ndIdx, dList = ndList }
-                               nwIdx = if focused entry then length $ wList cState else wIdx cState
+                               nwIdx = if focused entry then number else wIdx cState
                            in UserState nwIdx ((wList cState `modInd` number) nWorkspace)
         initState = foldl addDesktop (UserState undefined []) initList
     formatBar initState
