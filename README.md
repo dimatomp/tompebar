@@ -14,8 +14,7 @@ The utility, similarly to bspwm, uses two input sources:
 Read the bspc output from stdin and start printing the environment state to stdout (to lemonbar), prefixed with "bar>".
 
 # Control
-**WARNING:** The current version will crash if you try to manage (add/rename/delete) desktops via explicit `bspc` calls
-during the work of the tool.
+**WARNING:** The current version will crash if you try to manage (add/rename/delete) desktops via explicit `bspc` calls during the work of the tool. Support for multiple monitors is not tested.
 
 The utility called `tbctl` is provided to manipulate the state of workspaces. It is called as follows:
 ```
