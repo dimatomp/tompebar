@@ -1,8 +1,8 @@
 import Control.Concurrent
-import Control.Concurrent.MVar
 import Control.Monad
 
 import Data.Char
+import Data.IORef
 import Data.Maybe
 import Data.List
 
@@ -29,26 +29,23 @@ parseInput = reverse . parseInput' []
       parseInput' result [] = result
 
 -- bspwm may have accidentially switched the current desktop - it should notify me about that.
-subscribeBspc :: MVar UserState -> IO ()
+subscribeBspc :: IORef (UserState, Int) -> IO ()
 subscribeBspc stateVar = do
     dState <- liftM parseInput getLine
-    freeState <- tryTakeMVar stateVar -- If no luck, there could be readCommands renaming a
-                                      -- workspace using several queries. Staying silent.
-    when (isJust freeState) $ do
-        -- Update the current user state.
-        let Just cState = freeState
-            BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
-            adjustDst dst =
-                let bspcEntry = dState !! (fromJust $ findIndex ((== dName dst) . desktop) dState)
-                in dst { isOccupied = occupied bspcEntry }
-            adjustWsp workspace = workspace { dList = map adjustDst $ dList workspace }
-            occAdjust = map adjustWsp $ wList cState
-            Just wIndex = findIndex ((== wrName) . wName) occAdjust
-            Just dIndex = findIndex ((== dtName) . dName) (dList $ occAdjust !! wIndex)
-            newWState = (occAdjust !! wIndex) { dIdx = dIndex }
-            newState = UserState wIndex $ occAdjust & modInd wIndex newWState
-        formatBar newState
-        putMVar stateVar newState
+    newState <- atomicModifyIORef stateVar $ \(cState, count) -> if count == 0
+        then let BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
+                 adjustDst dst =
+                     let bspcEntry = dState !! (fromJust $ findIndex ((== dName dst) . desktop) dState)
+                     in dst { isOccupied = occupied bspcEntry }
+                 adjustWsp workspace = workspace { dList = map adjustDst $ dList workspace }
+                 occAdjust = map adjustWsp $ wList cState
+                 Just wIndex = findIndex ((== wrName) . wName) occAdjust
+                 Just dIndex = findIndex ((== dtName) . dName) (dList $ occAdjust !! wIndex)
+                 newWState = (occAdjust !! wIndex) { dIdx = dIndex }
+                 newState = UserState wIndex $ occAdjust & modInd wIndex newWState
+             in ((newState, count), Just newState)
+        else ((cState, count - 1), Nothing)
+    when (isJust newState) $ formatBar $ fromJust newState
     subscribeBspc stateVar
 
 
@@ -95,10 +92,10 @@ getCommand (BufferedInput sock list) = do
     return (cmd, BufferedInput sock rem)
 
 -- Process user commands.
-readCommands :: MVar UserState -> BufferedInput -> IO ()
+readCommands :: IORef (UserState, Int) -> BufferedInput -> IO ()
 readCommands stateVar buffer = do
     (cmd:det, buffer) <- getCommand buffer
-    cState <- takeMVar stateVar
+    (cState, _) <- readIORef stateVar
     newState <- case cmd of
         's' -> return $ -- s[d|w][p|n|number] - switch desktop/workspace to a prev/next/specified one.
             case det of
@@ -119,7 +116,9 @@ readCommands stateVar buffer = do
                  _        -> return cState
         'r' -> case det of -- r[d|w]name - rename a desktop/workspace
             'd':name -> cState & renameDesktop name $ \wName -> bspc ["desktop", "-n", wName]
-            'w':name -> cState & renameWorkspace name $ \old new -> bspc ["desktop", old, "-n", new]
+            'w':name -> cState & renameWorkspace name $ \old new -> do
+                atomicModifyIORef stateVar $ \(cState, counter) -> ((cState, counter + 1), ())
+                bspc ["desktop", old, "-n", new]
             _        -> return cState
         'd' -> -- d - remove a free desktop
             cState & removeDesktop $ \toDelete toSwitch -> do
@@ -128,7 +127,7 @@ readCommands stateVar buffer = do
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
     formatBar newState
-    putMVar stateVar newState
+    atomicModifyIORef stateVar $ \(_, counter) -> ((newState, counter), ())
     readCommands stateVar buffer
 
 main = do
@@ -141,6 +140,6 @@ main = do
     initList <- liftM parseInput getLine
     let initState = foldl addBspcEntry (UserState undefined []) initList
     formatBar initState
-    uState <- newMVar initState
+    uState <- newIORef (initState, 0)
     forkIO $ subscribeBspc uState
     readCommands uState $ BufferedInput inputSocket []
