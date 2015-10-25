@@ -17,11 +17,11 @@ Read the bspc output from stdin and start printing the environment state to stdo
 **WARNING:** The current version will crash if you try to manage (add/rename/delete) desktops via explicit `bspc` calls
 during the work of the tool.
 
-The utility called `tbctl` is provided to manipulate the state of workspaces. It is utilized as follows:
+The utility called `tbctl` is provided to manipulate the state of workspaces. It is called as follows:
 ```
 $ tbctl --add-desktop <name>
 $ tbctl --add-workspace <name>
-$ tbctl --switch-desktop [prev|next|<number>]   # The enumeration starts from zero.
+$ tbctl --switch-desktop [prev|next|<number>]
 $ tbctl --switch-workspace [prev|next|<number>]
 $ tbctl --rename-desktop <name>                 # Renames the current desktop
 $ tbctl --rename-workspace <name>
