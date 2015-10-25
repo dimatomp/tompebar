@@ -34,10 +34,10 @@ subscribeBspc stateVar = do
     dState <- liftM parseInput getLine
     newState <- atomicModifyIORef stateVar $ \(cState, count) -> if count == 0
         then let BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
-                 adjustDst dst =
-                     let bspcEntry = dState !! (fromJust $ findIndex ((== dName dst) . desktop) dState)
+                 adjustDst wsp dst =
+                     let bspcEntry = dState !! (fromJust $ findIndex (\entry -> workspace entry == wsp && desktop entry == dName dst) dState)
                      in dst { isOccupied = occupied bspcEntry }
-                 adjustWsp workspace = workspace { dList = map adjustDst $ dList workspace }
+                 adjustWsp workspace = workspace { dList = map (adjustDst $ wName workspace) $ dList workspace }
                  occAdjust = map adjustWsp $ wList cState
                  Just wIndex = findIndex ((== wrName) . wName) occAdjust
                  Just dIndex = findIndex ((== dtName) . dName) (dList $ occAdjust !! wIndex)
@@ -122,6 +122,7 @@ readCommands stateVar buffer = do
             _        -> return cState
         'd' -> -- d - remove a free desktop
             cState & removeDesktop $ \toDelete toSwitch -> do
+                atomicModifyIORef stateVar $ \(cState, counter) -> ((cState, counter + 1), ())
                 bspc ["desktop", "-f", toSwitch]
                 bspc ["monitor", "-r", toDelete]
         _   -> return cState
