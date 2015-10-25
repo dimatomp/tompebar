@@ -37,11 +37,14 @@ separator = '$'
 
 -- Get bspc representation of a desktop from the workspace and desktop names.
 getDesktopName :: String -> String -> String
-getDesktopName wsp dsk = wsp ++ separator : dsk
+getDesktopName "<workspace>" dsk = dsk
+getDesktopName wsp           dsk = wsp ++ separator : dsk
 
 -- Get my representation of a desktop from the bspc one.
 getDesktopRepr :: String -> (String, String)
-getDesktopRepr str = let (workspace, desktop) = span (/= separator) str in (workspace, tail desktop)
+getDesktopRepr str =
+    let (workspace, desktop) = span (/= separator) str
+    in if not $ null desktop then (workspace, tail desktop) else ("<workspace>", workspace)
 
 modInd :: Int -> a -> [a] -> [a]
 modInd idx newElem list = let (pref, suff) = splitAt idx list in pref ++ newElem : tail suff
