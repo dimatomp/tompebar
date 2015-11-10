@@ -1,4 +1,5 @@
 import Control.Concurrent
+import Control.Concurrent.MVar
 import Control.Monad
 
 import Data.Char
@@ -29,8 +30,8 @@ parseInput = reverse . parseInput' []
       parseInput' result [] = result
 
 -- bspwm may have accidentially switched the current desktop - it should notify me about that.
-subscribeBspc :: IORef (UserState, Int) -> IO ()
-subscribeBspc stateVar = do
+subscribeBspc :: MVar () -> IORef (UserState, Int) -> IO ()
+subscribeBspc format stateVar = do
     dState <- liftM parseInput getLine
     newState <- atomicModifyIORef stateVar $ \(cState, count) -> if count == 0
         then let BspcEntry _ _ wrName dtName = dState !! (fromJust $ findIndex focused dState)
@@ -45,8 +46,8 @@ subscribeBspc stateVar = do
                  newState = UserState wIndex $ occAdjust & modInd wIndex newWState
              in ((newState, count), Just newState)
         else ((cState, count - 1), Nothing)
-    when (isJust newState) $ formatBar $ fromJust newState
-    subscribeBspc stateVar
+    when (isJust newState) $ formatBar format $ fromJust newState
+    subscribeBspc format stateVar
 
 
 bspc :: [String] -> IO ()
@@ -56,8 +57,9 @@ bspc = callProcess "bspc"
 -- TODO
 --  * Add format customization
 --  * Try to use coloring tools of lemonbar
-formatBar :: UserState -> IO ()
-formatBar (UserState wIdx wList) = do
+formatBar :: MVar () -> UserState -> IO ()
+formatBar format (UserState wIdx wList) = do
+    takeMVar format
     getArgs >>= (`forM_` putStr)
     let (pref, Workspace cName dIdx dList : suff) = splitAt wIdx wList
     putChar '|'
@@ -72,6 +74,7 @@ formatBar (UserState wIdx wList) = do
     forM_ suff $ \(Workspace name _ _) -> putStr $ ' ':name ++ " |"
     putStrLn ""
     hFlush stdout
+    putMVar format ()
 
 data BufferedInput = BufferedInput Socket [String]
 
@@ -92,8 +95,8 @@ getCommand (BufferedInput sock list) = do
     return (cmd, BufferedInput sock rem)
 
 -- Process user commands.
-readCommands :: IORef (UserState, Int) -> BufferedInput -> IO ()
-readCommands stateVar buffer = do
+readCommands :: MVar () -> IORef (UserState, Int) -> BufferedInput -> IO ()
+readCommands format stateVar buffer = do
     (cmd:det, buffer) <- getCommand buffer
     (cState, _) <- readIORef stateVar
     newState <- case cmd of
@@ -127,9 +130,9 @@ readCommands stateVar buffer = do
                 bspc ["monitor", "-r", toDelete]
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
-    formatBar newState
+    formatBar format newState
     atomicModifyIORef stateVar $ \(_, counter) -> ((newState, counter), ())
-    readCommands stateVar buffer
+    readCommands format stateVar buffer
 
 main = do
     let socketPath = "/tmp/tompebar.socket"
@@ -140,7 +143,8 @@ main = do
     -- We should first obtain our initial state.
     initList <- liftM parseInput getLine
     let initState = foldl addBspcEntry (UserState undefined []) initList
-    formatBar initState
+    format <- newMVar ()
+    formatBar format initState
     uState <- newIORef (initState, 0)
-    forkIO $ subscribeBspc uState
-    readCommands uState $ BufferedInput inputSocket []
+    forkIO $ subscribeBspc format uState
+    readCommands format uState $ BufferedInput inputSocket []
