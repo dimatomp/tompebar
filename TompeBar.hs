@@ -127,7 +127,7 @@ readCommands format stateVar buffer = do
             cState & removeDesktop $ \toDelete toSwitch -> do
                 atomicModifyIORef stateVar $ \(cState, counter) -> ((cState, counter + 1), ())
                 bspc ["desktop", "-f", toSwitch]
-                bspc ["monitor", "-r", toDelete]
+                bspc ["desktop", toDelete, "-r"]
         _   -> return cState
     bspc ["desktop", "-f", getWorkspaceName newState]
     formatBar format newState
